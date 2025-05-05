@@ -1,0 +1,14 @@
+# Local settings for the fraud example. Relative paths resolve against this file.
+# Override any key with TESSERA_* environment variables, e.g. TESSERA_ONLINE_STORE.
+repo_path: features.py
+registry_path: ../../.tessera/registry.json
+online_store: sqlite:///../../.tessera/online.db
+model_dir: ../../.tessera/models
+feature_log: ../../.tessera/feature_log.jsonl
+dead_letter: ../../.tessera/dead_letter.jsonl
+models:
+  - name: card_fraud
+    alias: production
+kafka:
+  bootstrap_servers: localhost:19092
+  group_id: tessera-stream
