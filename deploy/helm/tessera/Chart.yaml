@@ -1,0 +1,7 @@
+apiVersion: v2
+name: tessera
+description: Tessera feature serving API and stream processor
+type: application
+version: 0.9.0
+appVersion: "0.9.0"
+keywords: [feature-store, ml, kafka, fastapi]

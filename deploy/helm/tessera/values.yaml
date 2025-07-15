@@ -1,0 +1,80 @@
+image:
+  repository: tesseraacr.azurecr.io/tessera
+  tag: ""            # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+# Azure workload identity: the user-assigned identities created by Terraform.
+identity:
+  api:
+    clientId: ""
+  stream:
+    clientId: ""
+  tenantId: ""
+
+config:
+  repo_path: /app/examples/fraud/features.py
+  model_dir: /models
+  feature_log: /var/log/tessera/feature_log.jsonl
+  dead_letter: /var/log/tessera/dead_letter.jsonl
+  models:
+    - name: card_fraud
+      alias: production
+  kafka:
+    group_id: tessera-stream
+    extra:
+      security.protocol: SASL_SSL
+      sasl.mechanisms: PLAIN
+      sasl.username: "$ConnectionString"
+
+# Secrets are read from Key Vault through the Secrets Store CSI driver and
+# exposed as environment variables; nothing sensitive lives in values files.
+keyVault:
+  name: ""
+  secrets:
+    - objectName: online-store-url          # rediss://:<key>@<host>:6380/0
+      env: TESSERA_ONLINE_STORE
+    - objectName: eventhubs-connection-string
+      env: TESSERA_KAFKA__EXTRA__SASL.PASSWORD
+    - objectName: eventhubs-bootstrap
+      env: TESSERA_KAFKA__BOOTSTRAP_SERVERS
+    - objectName: api-keys                  # JSON list
+      env: TESSERA_API_KEYS
+
+models:
+  # Model artifacts (the registry directory) are synced from blob storage by an
+  # init container using the API's workload identity.
+  storageAccount: ""
+  container: models
+
+api:
+  replicas: 3
+  resources:
+    requests: { cpu: 500m, memory: 512Mi }
+    limits: { memory: 1Gi }
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 60
+  pdb:
+    minAvailable: 2
+
+stream:
+  # Never more replicas than topic partitions: extra consumers sit idle.
+  replicas: 6
+  batchSize: 500
+  resources:
+    requests: { cpu: 500m, memory: 768Mi }
+    limits: { memory: 1536Mi }
+  terminationGracePeriodSeconds: 60
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+  seccompProfile: { type: RuntimeDefault }
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: { drop: [ALL] }

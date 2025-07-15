@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-stream
+  labels:
+    {{- include "tessera.labels" . | nindent 4 }}
+    app.kubernetes.io/component: stream
+spec:
+  replicas: {{ .Values.stream.replicas }}
+  strategy:
+    # Cooperative-sticky rebalancing moves partitions incrementally, so a
+    # rolling update never stops the whole consumer group.
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 1, maxSurge: 0 }
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: stream
+  template:
+    metadata:
+      labels:
+        {{- include "tessera.labels" . | nindent 8 }}
+        app.kubernetes.io/component: stream
+        azure.workload.identity/use: "true"
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/config.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: tessera-stream
+      terminationGracePeriodSeconds: {{ .Values.stream.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: stream
+          image: {{ include "tessera.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - tessera
+            - --config
+            - /etc/tessera/tessera.yaml
+            - stream
+            - --batch-size
+            - {{ .Values.stream.batchSize | quote }}
+          env:
+            {{- include "tessera.secretEnv" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.stream.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            {{- include "tessera.mounts" . | nindent 12 }}
+      volumes:
+        {{- include "tessera.volumes" . | nindent 8 }}
