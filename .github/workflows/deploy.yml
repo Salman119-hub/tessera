@@ -1,0 +1,68 @@
+name: deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        options: [dev, prod]
+        default: dev
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  id-token: write # GitHub OIDC -> Entra ID federated credential; no stored cloud secrets
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment || 'prod' }}
+    env:
+      ENVIRONMENT: ${{ inputs.environment || 'prod' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build and push image
+        run: |
+          az acr build --registry "${{ vars.ACR_NAME }}" \
+            --image "tessera:${GITHUB_SHA::12}" --image "tessera:${ENVIRONMENT}" .
+
+      - name: Plan definitions against the deployed registry
+        run: |
+          pip install -e .
+          # A missing registry (first deploy) is fine: the plan then shows everything as new.
+          az storage blob download --auth-mode login --account-name "${{ vars.LAKE_ACCOUNT }}" \
+            -c models -n registry.json -f registry.json --only-show-errors || true
+          TESSERA_REGISTRY_PATH=registry.json tessera --repo examples/fraud/features.py plan | tee plan.txt
+          if grep -q "backfill required" plan.txt; then
+            echo "::warning::Definition changes need a backfill before traffic depends on them."
+          fi
+
+      - uses: azure/aks-set-context@v4
+        with:
+          resource-group: rg-tessera-${{ env.ENVIRONMENT }}
+          cluster-name: aks-tessera-${{ env.ENVIRONMENT }}
+          use-kubelogin: "true"
+
+      - uses: azure/setup-helm@v4
+
+      - name: Helm upgrade
+        run: |
+          helm upgrade --install tessera deploy/helm/tessera \
+            --namespace tessera --create-namespace \
+            --set image.repository="${{ vars.ACR_NAME }}.azurecr.io/tessera" \
+            --set image.tag="${GITHUB_SHA::12}" \
+            --set keyVault.name="${{ vars.KEY_VAULT_NAME }}" \
+            --set identity.tenantId="${{ vars.AZURE_TENANT_ID }}" \
+            --set identity.api.clientId="${{ vars.API_CLIENT_ID }}" \
+            --set identity.stream.clientId="${{ vars.STREAM_CLIENT_ID }}" \
+            --set models.storageAccount="${{ vars.LAKE_ACCOUNT }}" \
+            --atomic --timeout 10m --wait
